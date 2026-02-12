@@ -11,6 +11,26 @@ import {
 } from "./lib/auth";
 
 const THEME_KEY = "pixoraTheme";
+const hasOAuthFragment = () => {
+  if (typeof window === "undefined") return false;
+  const hash = window.location.hash ?? "";
+  return (
+    hash.includes("access_token=") ||
+    hash.includes("refresh_token=") ||
+    hash.includes("provider_token=")
+  );
+};
+
+const clearOAuthFragment = () => {
+  if (typeof window === "undefined") return;
+  const { pathname, search } = window.location;
+  window.history.replaceState(
+    window.history.state,
+    document.title,
+    `${pathname}${search}`,
+  );
+};
+
 const getInitialTheme = () => {
   if (typeof window === "undefined") return "light";
   const savedTheme = localStorage.getItem(THEME_KEY);
@@ -44,6 +64,9 @@ export default function App({ children }) {
       if (!isMounted) return;
       setUser(auth.user ?? (auth.email ? { email: auth.email, demo: true } : null));
       setIsAdmin(Boolean(auth.isAdmin));
+      if (auth.isAuthenticated && hasOAuthFragment()) {
+        clearOAuthFragment();
+      }
     }
 
     syncSession();
@@ -65,6 +88,9 @@ export default function App({ children }) {
         persistAuthSession({ email: authEmail, isAdmin: admin });
         setUser(session.user);
         setIsAdmin(admin);
+        if (hasOAuthFragment()) {
+          clearOAuthFragment();
+        }
       });
 
       return () => {

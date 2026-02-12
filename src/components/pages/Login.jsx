@@ -7,6 +7,27 @@ import {
   persistAuthSession,
 } from "../../lib/auth";
 
+const hasOAuthFragment = () => {
+  if (typeof window === "undefined") return false;
+  const hash = window.location.hash ?? "";
+  return (
+    hash.includes("access_token=") ||
+    hash.includes("refresh_token=") ||
+    hash.includes("provider_token=") ||
+    hash.includes("error_description=")
+  );
+};
+
+const clearOAuthFragment = () => {
+  if (typeof window === "undefined") return;
+  const { pathname, search } = window.location;
+  window.history.replaceState(
+    window.history.state,
+    document.title,
+    `${pathname}${search}`,
+  );
+};
+
 const resolveOAuthRedirectUrl = () => {
   const configured = String(
     import.meta.env.VITE_AUTH_REDIRECT_URL ?? "",
@@ -44,6 +65,9 @@ export default function Login() {
         const authEmail = (session.user.email ?? "").toLowerCase().trim();
         const admin = isAdminEmail(authEmail);
         persistAuthSession({ email: authEmail, isAdmin: admin });
+        if (hasOAuthFragment()) {
+          clearOAuthFragment();
+        }
 
         setStatus("? Signed in successfully!");
         setStatusType("success");

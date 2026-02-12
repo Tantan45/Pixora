@@ -3,7 +3,14 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.VITE_SUPABASE_KEY;
 const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
-const supabase = isSupabaseConfigured ? createClient(supabaseUrl, supabaseKey) : null;
+const supabase = isSupabaseConfigured
+  ? createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        flowType: "pkce",
+        detectSessionInUrl: true,
+      },
+    })
+  : null;
 
 export { supabase, isSupabaseConfigured };
 export default supabase;

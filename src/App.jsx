@@ -11,23 +11,43 @@ import {
 } from "./lib/auth";
 
 const THEME_KEY = "pixoraTheme";
-const hasOAuthFragment = () => {
+const OAUTH_HASH_MARKERS = [
+  "access_token=",
+  "refresh_token=",
+  "provider_token=",
+  "error_description=",
+];
+const OAUTH_QUERY_KEYS = ["code", "state", "error", "error_description"];
+
+const hasOAuthCallbackParams = () => {
   if (typeof window === "undefined") return false;
   const hash = window.location.hash ?? "";
+  const searchParams = new URLSearchParams(window.location.search ?? "");
   return (
-    hash.includes("access_token=") ||
-    hash.includes("refresh_token=") ||
-    hash.includes("provider_token=")
+    OAUTH_HASH_MARKERS.some((marker) => hash.includes(marker)) ||
+    OAUTH_QUERY_KEYS.some((key) => searchParams.has(key))
   );
 };
 
-const clearOAuthFragment = () => {
+const clearOAuthCallbackParams = () => {
   if (typeof window === "undefined") return;
-  const { pathname, search } = window.location;
+  const url = new URL(window.location.href);
+  OAUTH_QUERY_KEYS.forEach((key) => {
+    url.searchParams.delete(key);
+  });
+
+  const hasHashAuthData = OAUTH_HASH_MARKERS.some((marker) =>
+    url.hash.includes(marker),
+  );
+  if (hasHashAuthData) {
+    url.hash = "";
+  }
+
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
   window.history.replaceState(
     window.history.state,
     document.title,
-    `${pathname}${search}`,
+    nextUrl,
   );
 };
 
@@ -64,8 +84,8 @@ export default function App({ children }) {
       if (!isMounted) return;
       setUser(auth.user ?? (auth.email ? { email: auth.email, demo: true } : null));
       setIsAdmin(Boolean(auth.isAdmin));
-      if (auth.isAuthenticated && hasOAuthFragment()) {
-        clearOAuthFragment();
+      if (auth.isAuthenticated && hasOAuthCallbackParams()) {
+        clearOAuthCallbackParams();
       }
     }
 
@@ -88,8 +108,8 @@ export default function App({ children }) {
         persistAuthSession({ email: authEmail, isAdmin: admin });
         setUser(session.user);
         setIsAdmin(admin);
-        if (hasOAuthFragment()) {
-          clearOAuthFragment();
+        if (hasOAuthCallbackParams()) {
+          clearOAuthCallbackParams();
         }
       });
 

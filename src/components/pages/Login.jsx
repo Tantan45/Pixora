@@ -7,40 +7,70 @@ import {
   persistAuthSession,
 } from "../../lib/auth";
 
-const hasOAuthFragment = () => {
+const OAUTH_HASH_MARKERS = [
+  "access_token=",
+  "refresh_token=",
+  "provider_token=",
+  "error_description=",
+];
+const OAUTH_QUERY_KEYS = ["code", "state", "error", "error_description"];
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+const hasOAuthCallbackParams = () => {
   if (typeof window === "undefined") return false;
   const hash = window.location.hash ?? "";
+  const searchParams = new URLSearchParams(window.location.search ?? "");
   return (
-    hash.includes("access_token=") ||
-    hash.includes("refresh_token=") ||
-    hash.includes("provider_token=") ||
-    hash.includes("error_description=")
+    OAUTH_HASH_MARKERS.some((marker) => hash.includes(marker)) ||
+    OAUTH_QUERY_KEYS.some((key) => searchParams.has(key))
   );
 };
 
-const clearOAuthFragment = () => {
+const clearOAuthCallbackParams = () => {
   if (typeof window === "undefined") return;
-  const { pathname, search } = window.location;
+  const url = new URL(window.location.href);
+  OAUTH_QUERY_KEYS.forEach((key) => {
+    url.searchParams.delete(key);
+  });
+
+  const hasHashAuthData = OAUTH_HASH_MARKERS.some((marker) =>
+    url.hash.includes(marker),
+  );
+  if (hasHashAuthData) {
+    url.hash = "";
+  }
+
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
   window.history.replaceState(
     window.history.state,
     document.title,
-    `${pathname}${search}`,
+    nextUrl,
   );
 };
 
 const resolveOAuthRedirectUrl = () => {
+  if (typeof window === "undefined") {
+    return String(import.meta.env.VITE_AUTH_REDIRECT_URL ?? "").trim();
+  }
+
+  const currentOrigin = window.location.origin;
+  const currentHostname = String(window.location.hostname ?? "").toLowerCase();
+  if (LOCAL_HOSTNAMES.has(currentHostname)) {
+    return currentOrigin;
+  }
+
   const configured = String(
     import.meta.env.VITE_AUTH_REDIRECT_URL ?? "",
   ).trim();
 
   if (!configured) {
-    return window.location.origin;
+    return currentOrigin;
   }
 
   try {
-    return new URL(configured).origin;
+    return new URL(configured).toString();
   } catch {
-    return window.location.origin;
+    return currentOrigin;
   }
 };
 
@@ -65,8 +95,8 @@ export default function Login() {
         const authEmail = (session.user.email ?? "").toLowerCase().trim();
         const admin = isAdminEmail(authEmail);
         persistAuthSession({ email: authEmail, isAdmin: admin });
-        if (hasOAuthFragment()) {
-          clearOAuthFragment();
+        if (hasOAuthCallbackParams()) {
+          clearOAuthCallbackParams();
         }
 
         setStatus("? Signed in successfully!");

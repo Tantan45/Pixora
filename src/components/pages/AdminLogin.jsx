@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { persistAuthSession } from "../../lib/auth";
 
 const ADMIN_ACCESS_CODE = "pixora-admin";
+const ADMIN_DEMO_EMAIL = "admin@pixora.store";
 
 export default function AdminLogin() {
   const [accessCode, setAccessCode] = useState("");
@@ -15,7 +17,7 @@ export default function AdminLogin() {
       return;
     }
 
-    localStorage.setItem("pixoraAdmin", "true");
+    persistAuthSession({ email: ADMIN_DEMO_EMAIL, isAdmin: true });
     setStatus("Signed in.");
     navigate("/admin");
   };

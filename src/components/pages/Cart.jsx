@@ -1,14 +1,44 @@
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useCart } from "../../context/CartContext";
+import { useProducts } from "../../context/ProductsContext";
+import { resolveAuthState } from "../../lib/auth";
+import {
+  ORDER_STATUS_LABELS,
+  createOrder,
+  getAutoConfirmOrders,
+} from "../../lib/orders";
 
 const formatPrice = (value) => `PHP ${Number(value).toLocaleString("en-PH")}`;
+const toStock = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.floor(parsed));
+};
+const shortOrderId = (id) => String(id ?? "").slice(0, 8).toUpperCase();
 
 export default function Cart() {
   const { items, updateQuantity, removeItem, subtotal, itemCount, clearCart } = useCart();
+  const { products, updateProduct } = useProducts();
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [isOrderPlaced, setIsOrderPlaced] = useState(false);
+  const [isPlacingOrder, setIsPlacingOrder] = useState(false);
+  const [checkoutError, setCheckoutError] = useState("");
+  const [placedOrder, setPlacedOrder] = useState(null);
+
+  const stockById = useMemo(
+    () =>
+      new Map(
+        products.map((product) => [product.id, toStock(product.stock)]),
+      ),
+    [products],
+  );
+
+  const getCurrentStock = (item) => {
+    const catalogStock = stockById.get(item.id);
+    if (Number.isFinite(catalogStock)) return catalogStock;
+    return toStock(item.stock);
+  };
 
   useEffect(() => {
     if (!isCheckoutOpen) return undefined;
@@ -17,6 +47,7 @@ export default function Cart() {
       if (event.key === "Escape") {
         setIsCheckoutOpen(false);
         setIsOrderPlaced(false);
+        setCheckoutError("");
       }
     };
 
@@ -32,17 +63,67 @@ export default function Cart() {
 
   const openCheckoutPopup = () => {
     setIsOrderPlaced(false);
+    setCheckoutError("");
+    setPlacedOrder(null);
     setIsCheckoutOpen(true);
   };
 
   const closeCheckoutPopup = () => {
     setIsCheckoutOpen(false);
     setIsOrderPlaced(false);
+    setCheckoutError("");
+    setPlacedOrder(null);
   };
 
-  const handlePlaceOrder = () => {
+  const handlePlaceOrder = async () => {
+    if (!items.length || isPlacingOrder) return;
+
+    setIsPlacingOrder(true);
+    setCheckoutError("");
+
+    const auth = await resolveAuthState();
+    if (!auth.isAuthenticated || !auth.email) {
+      setCheckoutError("Please sign in first before placing an order.");
+      setIsPlacingOrder(false);
+      return;
+    }
+
+    const stockIssues = items.filter((item) => item.quantity > getCurrentStock(item));
+    if (stockIssues.length) {
+      const names = stockIssues.map((item) => item.name).join(", ");
+      setCheckoutError(
+        `Insufficient stock for: ${names}. Please adjust cart quantity and try again.`,
+      );
+      setIsPlacingOrder(false);
+      return;
+    }
+
+    const order = createOrder({
+      userId: auth.user?.id ?? null,
+      userEmail: auth.email,
+      subtotal,
+      autoConfirm: getAutoConfirmOrders(),
+      items: items.map((item) => ({
+        product_id: item.id,
+        product_name: item.name,
+        unit_price: item.price,
+        quantity: item.quantity,
+        image: item.image,
+        category: item.category,
+      })),
+    });
+
+    items.forEach((item) => {
+      const currentStock = getCurrentStock(item);
+      updateProduct(item.id, {
+        stock: Math.max(0, currentStock - item.quantity),
+      });
+    });
+
     clearCart();
+    setPlacedOrder(order);
     setIsOrderPlaced(true);
+    setIsPlacingOrder(false);
   };
 
   if (items.length === 0 && !isCheckoutOpen) {
@@ -50,12 +131,20 @@ export default function Cart() {
       <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-sm">
         <h1 className="serif text-3xl font-semibold text-slate-900">Your cart is empty</h1>
         <p className="mt-3 text-sm text-slate-600">Browse curated cameras and accessories to start building your kit.</p>
-        <Link
-          to="/shop"
-          className="mt-6 inline-flex rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
-        >
-          Back to shop
-        </Link>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <Link
+            to="/shop"
+            className="inline-flex rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
+          >
+            Back to shop
+          </Link>
+          <Link
+            to="/orders"
+            className="inline-flex rounded-full border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700"
+          >
+            View orders
+          </Link>
+        </div>
       </div>
     );
   }
@@ -69,51 +158,75 @@ export default function Cart() {
             <Link to="/shop" className="text-sm font-semibold text-slate-600">Continue shopping</Link>
           </div>
           <div className="space-y-4">
-            {items.map((item) => (
-              <motion.div
-                key={item.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
-              >
-                <div className="grid gap-4 md:grid-cols-[140px_1fr_auto] items-center">
-                  <div
-                    className="h-28 rounded-2xl bg-cover bg-center"
-                    style={{ backgroundImage: `url(${item.image})` }}
-                    aria-label={item.name}
-                  />
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-slate-500">{item.category}</p>
-                    <p className="text-lg font-semibold text-slate-900">{item.name}</p>
-                    <p className="text-sm text-slate-600">{formatPrice(item.price)}</p>
-                    <div className="mt-3 flex items-center gap-2">
-                      <button
-                        onClick={() => updateQuantity(item.id, item.quantity - 1)}
-                        className="h-8 w-8 rounded-full border border-slate-200 text-slate-700 hover:border-slate-300"
-                      >
-                        -
-                      </button>
-                      <span className="text-sm font-semibold text-slate-900">{item.quantity}</span>
-                      <button
-                        onClick={() => updateQuantity(item.id, item.quantity + 1)}
-                        className="h-8 w-8 rounded-full border border-slate-200 text-slate-700 hover:border-slate-300"
-                      >
-                        +
-                      </button>
-                      <button
-                        onClick={() => removeItem(item.id)}
-                        className="ml-4 text-xs font-semibold text-slate-500 hover:text-slate-700"
-                      >
-                        Remove
-                      </button>
+            {items.map((item) => {
+              const stock = getCurrentStock(item);
+              const canIncrease = item.quantity < stock;
+
+              return (
+                <div
+                  key={item.id}
+                  className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
+                >
+                  <div className="grid gap-4 md:grid-cols-[140px_1fr_auto] items-center">
+                    <div
+                      className="h-28 rounded-2xl bg-cover bg-center"
+                      style={{ backgroundImage: `url(${item.image})` }}
+                      aria-label={item.name}
+                    />
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-slate-500">{item.category}</p>
+                      <p className="text-lg font-semibold text-slate-900">{item.name}</p>
+                      <p className="text-sm text-slate-600">{formatPrice(item.price)}</p>
+                      <p className="mt-1 text-xs text-slate-500">Stock: {stock}</p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button
+                          onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                          className="h-8 w-8 rounded-full border border-slate-200 text-slate-700 hover:border-slate-300"
+                        >
+                          -
+                        </button>
+                        <span className="text-sm font-semibold text-slate-900">{item.quantity}</span>
+                        <button
+                          onClick={() =>
+                            updateQuantity(
+                              item.id,
+                              Math.min(item.quantity + 1, stock),
+                            )
+                          }
+                          disabled={!canIncrease}
+                          className={`h-8 w-8 rounded-full border text-slate-700 ${
+                            canIncrease
+                              ? "border-slate-200 hover:border-slate-300"
+                              : "border-slate-100 cursor-not-allowed text-slate-300"
+                          }`}
+                        >
+                          +
+                        </button>
+                        <button
+                          onClick={() => removeItem(item.id)}
+                          className="ml-4 text-xs font-semibold text-slate-500 hover:text-slate-700"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      {!canIncrease && stock > 0 && (
+                        <p className="mt-2 text-xs text-amber-600">
+                          Max quantity reached for this item.
+                        </p>
+                      )}
+                      {stock <= 0 && (
+                        <p className="mt-2 text-xs text-rose-600">
+                          Out of stock. Remove this item or wait for restock.
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right text-sm font-semibold text-slate-900">
+                      {formatPrice(item.price * item.quantity)}
                     </div>
                   </div>
-                  <div className="text-right text-sm font-semibold text-slate-900">
-                    {formatPrice(item.price * item.quantity)}
-                  </div>
                 </div>
-              </motion.div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
@@ -145,7 +258,7 @@ export default function Cart() {
             >
               Proceed to checkout
             </button>
-            <p className="mt-3 text-xs text-slate-500">Payments are processed securely via Supabase integration.</p>
+            <p className="mt-3 text-xs text-slate-500">Sign in is required before final checkout.</p>
           </div>
           <div className="rounded-3xl border border-slate-200 bg-white p-6 text-sm text-slate-600">
             <p className="font-semibold text-slate-900">Need help?</p>
@@ -213,6 +326,12 @@ export default function Cart() {
                   </div>
                 </div>
 
+                {checkoutError && (
+                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {checkoutError}
+                  </div>
+                )}
+
                 <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
                   <button
                     type="button"
@@ -224,12 +343,15 @@ export default function Cart() {
                   <button
                     type="button"
                     onClick={handlePlaceOrder}
-                    disabled={items.length === 0}
+                    disabled={items.length === 0 || isPlacingOrder}
                     className="rounded-full bg-[var(--accent)] px-5 py-2 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Place order
+                    {isPlacingOrder ? "Placing order..." : "Place order"}
                   </button>
                 </div>
+                <p className="mt-3 text-xs text-slate-500">
+                  If auto-confirm is enabled in admin settings, this order will be confirmed immediately.
+                </p>
               </>
             ) : (
               <div className="py-6 text-center">
@@ -237,7 +359,10 @@ export default function Cart() {
                   Order placed
                 </h2>
                 <p className="mt-2 text-sm text-slate-600">
-                  Your order was submitted successfully.
+                  Order #{shortOrderId(placedOrder?.id)} was submitted successfully.
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Status: {ORDER_STATUS_LABELS[placedOrder?.status] ?? "Pending"}
                 </p>
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
                   <button
@@ -248,11 +373,11 @@ export default function Cart() {
                     Close
                   </button>
                   <Link
-                    to="/shop"
+                    to="/orders"
                     onClick={closeCheckoutPopup}
                     className="inline-flex rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white"
                   >
-                    Continue shopping
+                    View my orders
                   </Link>
                 </div>
               </div>

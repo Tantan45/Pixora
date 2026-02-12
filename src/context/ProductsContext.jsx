@@ -12,6 +12,13 @@ const STORAGE_KEY = "pixoraProducts";
 const ProductsContext = createContext(null);
 const hasImage = (item) =>
   typeof item?.image === "string" && item.image.trim().length > 0;
+const toValidStock = (value, category = "") => {
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
+  if (category === "Accessories") return 30;
+  if (category === "Lenses") return 12;
+  return 8;
+};
 const REMOVED_PRODUCT_IDS = new Set([
   "cam-fujifilm-x1",
   "cam-fujifilm-xt5",
@@ -46,9 +53,14 @@ const withSeedImage = (item) => {
   return { ...item, image: seedImage };
 };
 
+const withNormalizedStock = (item) => {
+  if (!item || typeof item !== "object") return item;
+  return { ...item, stock: toValidStock(item.stock, item.category) };
+};
+
 const sanitizeProducts = (items) =>
   (Array.isArray(items) ? items : [])
-    .map((item) => withSeedImage(item))
+    .map((item) => withNormalizedStock(withSeedImage(item)))
     .filter((item) => isVisibleProduct(item));
 
 const mergeSeedProducts = (storedProducts) => {
@@ -78,11 +90,6 @@ export function ProductsProvider({ children }) {
   const [products, setProductsState] = useState(loadProducts);
 
   useEffect(() => {
-    // Self-heal persisted state so the full default catalog is always present.
-    setProductsState((prev) => mergeSeedProducts(prev));
-  }, []);
-
-  useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
   }, [products]);
@@ -103,6 +110,22 @@ export function ProductsProvider({ children }) {
     setProductsState((prev) =>
       sanitizeProducts(
         prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      ),
+    );
+  }, []);
+
+  const adjustStock = useCallback((id, quantityDelta) => {
+    setProductsState((prev) =>
+      sanitizeProducts(
+        prev.map((item) => {
+          if (item.id !== id) return item;
+          const current = Number(item.stock ?? 0);
+          const delta = Number(quantityDelta ?? 0);
+          const nextStock = Number.isFinite(current + delta)
+            ? Math.max(0, Math.floor(current + delta))
+            : current;
+          return { ...item, stock: nextStock };
+        }),
       ),
     );
   }, []);
@@ -130,10 +153,11 @@ export function ProductsProvider({ children }) {
       setProducts,
       addProduct,
       updateProduct,
+      adjustStock,
       removeProduct,
       upsertProduct,
     }),
-    [products, addProduct, updateProduct, removeProduct, upsertProduct],
+    [products, setProducts, addProduct, updateProduct, adjustStock, removeProduct, upsertProduct],
   );
 
   return <ProductsContext.Provider value={value}>{children}</ProductsContext.Provider>;

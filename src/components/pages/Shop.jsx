@@ -7,9 +7,14 @@ const formatPrice = (value) => `PHP ${Number(value).toLocaleString("en-PH")}`;
 const PINNED_CATEGORIES = ["Mirrorless", "Accessories"];
 const hasUsableImage = (item) =>
   typeof item?.image === "string" && item.image.trim().length > 0;
+const getStockCount = (item) => {
+  const stock = Number(item?.stock);
+  if (!Number.isFinite(stock)) return 0;
+  return Math.max(0, Math.floor(stock));
+};
 
 export default function Shop() {
-  const { addItem } = useCart();
+  const { addItem, items } = useCart();
   const { products: allProducts } = useProducts();
   const [activeCategory, setActiveCategory] = useState("All");
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -54,6 +59,14 @@ export default function Shop() {
         .length,
     [productsWithImages],
   );
+  const cartQuantityById = useMemo(
+    () =>
+      items.reduce((acc, item) => {
+        acc[item.id] = Number(item.quantity ?? 0);
+        return acc;
+      }, {}),
+    [items],
+  );
 
   useEffect(() => {
     if (!isAddedModalOpen) return undefined;
@@ -89,6 +102,10 @@ export default function Shop() {
   };
 
   const handleAddToCart = (product) => {
+    const stock = getStockCount(product);
+    const currentInCart = Number(cartQuantityById[product.id] ?? 0);
+    if (currentInCart >= stock) return;
+
     addItem(product, 1);
     setRecentlyAddedId(product.id);
     setSelectedProduct(product);
@@ -145,6 +162,12 @@ export default function Shop() {
       <section className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         {products.map((product) => {
           const isRecentlyAdded = recentlyAddedId === product.id;
+          const stockCount = getStockCount(product);
+          const inCart = Number(cartQuantityById[product.id] ?? 0);
+          const availableToAdd = Math.max(0, stockCount - inCart);
+          const isOutOfStock = stockCount <= 0;
+          const isMaxedInCart = !isOutOfStock && availableToAdd <= 0;
+
           return (
             <div
               key={product.id}
@@ -171,19 +194,41 @@ export default function Shop() {
                   <p className="text-sm text-slate-600">
                     {formatPrice(product.price)}
                   </p>
+                  <p
+                    className={`text-xs ${
+                      isOutOfStock
+                        ? "text-rose-600"
+                        : availableToAdd <= 3
+                          ? "text-amber-600"
+                          : "text-emerald-700"
+                    }`}
+                  >
+                    {isOutOfStock
+                      ? "Out of stock"
+                      : `${stockCount} in stock (${availableToAdd} available to add)`}
+                  </p>
                 </div>
               </Link>
               <div className="mt-4 flex gap-3">
                 <button
                   type="button"
                   onClick={() => handleAddToCart(product)}
+                  disabled={isOutOfStock || isMaxedInCart}
                   className={`flex-1 rounded-full px-4 py-2 text-sm font-semibold text-white ${
-                    isRecentlyAdded
+                    isOutOfStock || isMaxedInCart
+                      ? "bg-slate-300 cursor-not-allowed"
+                      : isRecentlyAdded
                       ? "bg-emerald-600 hover:bg-emerald-600"
                       : "bg-slate-900 hover:bg-slate-800"
                   }`}
                 >
-                  {isRecentlyAdded ? "Added to cart" : "Add to cart"}
+                  {isOutOfStock
+                    ? "Out of stock"
+                    : isMaxedInCart
+                      ? "Max stock reached"
+                      : isRecentlyAdded
+                        ? "Added to cart"
+                        : "Add to cart"}
                 </button>
                 <Link
                   to={`/product/${product.id}`}
@@ -230,6 +275,9 @@ export default function Shop() {
               <p className="text-xs uppercase tracking-wide text-slate-500">{selectedProduct.category}</p>
               <p className="mt-1 text-sm font-semibold text-slate-900">{selectedProduct.name}</p>
               <p className="text-sm text-slate-600">{formatPrice(selectedProduct.price)}</p>
+              <p className="text-xs text-slate-500">
+                Stock left: {getStockCount(selectedProduct)}
+              </p>
             </div>
 
             <div className="mt-6 flex flex-wrap items-center justify-end gap-3">

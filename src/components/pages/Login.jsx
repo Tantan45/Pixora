@@ -1,20 +1,11 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase, isSupabaseConfigured } from "../../lib/supabase";
-
-const ADMIN_EMAILS = [
-  "admin@pixora.com",
-  "admin@pixora.store",
-  "jonathanpalomar85@gmail.com",
-];
-
-const isAdminEmail = (email) => {
-  const normalizedEmail = email.toLowerCase().trim();
-  return (
-    ADMIN_EMAILS.some((adminEmail) => adminEmail === normalizedEmail) ||
-    normalizedEmail.includes("admin")
-  );
-};
+import {
+  getStoredAuth,
+  isAdminEmail,
+  persistAuthSession,
+} from "../../lib/auth";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -32,22 +23,25 @@ export default function Login() {
       const {
         data: { subscription },
       } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (session?.user) {
-          setStatus("✓ Signed in successfully!");
-          setStatusType("success");
-          setIsLoading(false);
-          setTimeout(() => {
-            if (isAdminEmail(session.user.email || "")) {
-              navigate("/admin");
-            } else {
-              navigate("/");
-            }
-          }, 1000);
-        }
+        if (!session?.user) return;
+
+        const authEmail = (session.user.email ?? "").toLowerCase().trim();
+        const admin = isAdminEmail(authEmail);
+        persistAuthSession({ email: authEmail, isAdmin: admin });
+
+        setStatus("? Signed in successfully!");
+        setStatusType("success");
+        setIsLoading(false);
+
+        setTimeout(() => {
+          navigate(admin ? "/admin" : "/");
+        }, 1000);
       });
 
       return () => subscription.unsubscribe();
     }
+
+    return undefined;
   }, [navigate]);
 
   async function checkExistingSession() {
@@ -55,21 +49,25 @@ export default function Login() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (user) {
+      if (user?.email) {
+        const authEmail = user.email.toLowerCase().trim();
+        const admin = isAdminEmail(authEmail);
+        persistAuthSession({ email: authEmail, isAdmin: admin });
         setStatus("You're already signed in!");
         setStatusType("success");
       }
-    } else {
-      const demoUser = localStorage.getItem("pixoraCustomer");
-      const demoAdmin = localStorage.getItem("pixoraAdmin");
-      if (demoAdmin === "true") {
-        setStatus("Already signed in as admin");
-        setStatusType("success");
-      } else if (demoUser) {
-        setStatus(`Already signed in as ${demoUser}`);
-        setStatusType("success");
-      }
+      return;
     }
+
+    const stored = getStoredAuth();
+    if (!stored.isAuthenticated || !stored.email) return;
+
+    setStatus(
+      stored.isAdmin
+        ? `Already signed in as admin (${stored.email})`
+        : `Already signed in as ${stored.email}`,
+    );
+    setStatusType("success");
   }
 
   async function handleSubmit(event) {
@@ -93,23 +91,20 @@ export default function Login() {
     }
 
     if (!isSupabaseConfigured) {
+      const normalizedEmail = email.toLowerCase().trim();
+      const admin = isAdminEmail(normalizedEmail);
+
       setTimeout(() => {
-        if (isAdminEmail(email)) {
-          localStorage.setItem("pixoraAdmin", "true");
-          localStorage.removeItem("pixoraCustomer");
-          setStatus(`✓ Signed in successfully as admin, ${email}!`);
-          setStatusType("success");
-          setIsLoading(false);
-          setTimeout(() => navigate("/admin"), 1500);
-        } else {
-          localStorage.setItem("pixoraCustomer", email);
-          localStorage.removeItem("pixoraAdmin");
-          setStatus(`✓ Signed in successfully as ${email}!`);
-          setStatusType("success");
-          setIsLoading(false);
-          setTimeout(() => navigate("/"), 1500);
-        }
-      }, 800);
+        persistAuthSession({ email: normalizedEmail, isAdmin: admin });
+        setStatus(
+          admin
+            ? `? Signed in successfully as admin, ${normalizedEmail}!`
+            : `? Signed in successfully as ${normalizedEmail}!`,
+        );
+        setStatusType("success");
+        setIsLoading(false);
+        setTimeout(() => navigate(admin ? "/admin" : "/"), 900);
+      }, 600);
       return;
     }
 
@@ -125,31 +120,26 @@ export default function Login() {
       const { error } = await action;
 
       if (error) {
-        setStatus(`✗ ${error.message}`);
+        setStatus(`? ${error.message}`);
         setStatusType("error");
         setIsLoading(false);
         return;
       }
 
       if (mode === "signin") {
-        if (isAdminEmail(email)) {
-          localStorage.setItem("pixoraAdmin", "true");
-          localStorage.removeItem("pixoraCustomer");
-          setStatus(`✓ Signed in successfully as admin, ${email}!`);
-          setStatusType("success");
-          setIsLoading(false);
-          setTimeout(() => navigate("/admin"), 1500);
-        } else {
-          localStorage.setItem("pixoraCustomer", email);
-          localStorage.removeItem("pixoraAdmin");
-          setStatus(`✓ Welcome back! Signed in as ${email}`);
-          setStatusType("success");
-          setIsLoading(false);
-          setTimeout(() => navigate("/"), 1500);
-        }
+        const normalizedEmail = email.toLowerCase().trim();
+        const admin = isAdminEmail(normalizedEmail);
+        persistAuthSession({ email: normalizedEmail, isAdmin: admin });
+        setStatus(
+          admin
+            ? `? Signed in successfully as admin, ${normalizedEmail}!`
+            : `? Welcome back! Signed in as ${normalizedEmail}`,
+        );
+        setStatusType("success");
+        setTimeout(() => navigate(admin ? "/admin" : "/"), 900);
       } else {
         setStatus(
-          "✓ Account created! Please check your email to verify your account.",
+          "? Account created! Please check your email to verify your account.",
         );
         setStatusType("success");
         setTimeout(() => {
@@ -159,7 +149,7 @@ export default function Login() {
         }, 3000);
       }
     } catch (err) {
-      setStatus(`✗ An unexpected error occurred: ${err.message}`);
+      setStatus(`? An unexpected error occurred: ${err.message}`);
       setStatusType("error");
     } finally {
       setIsLoading(false);
@@ -197,12 +187,12 @@ export default function Login() {
       });
 
       if (error) {
-        setStatus(`✗ ${error.message}`);
+        setStatus(`? ${error.message}`);
         setStatusType("error");
         setIsLoading(false);
       }
     } catch (err) {
-      setStatus(`✗ An unexpected error occurred: ${err.message}`);
+      setStatus(`? An unexpected error occurred: ${err.message}`);
       setStatusType("error");
       setIsLoading(false);
     }
@@ -221,11 +211,11 @@ export default function Login() {
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-            <p className="font-semibold text-slate-900">✓ Order history</p>
+            <p className="font-semibold text-slate-900">? Order history</p>
             <p className="mt-2">View purchase history and download receipts.</p>
           </div>
           <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
-            <p className="font-semibold text-slate-900">✓ Exclusive drops</p>
+            <p className="font-semibold text-slate-900">? Exclusive drops</p>
             <p className="mt-2">
               Get first access to new camera bodies and bundles.
             </p>
@@ -246,7 +236,7 @@ export default function Login() {
             onClick={handleModeSwitch}
             className="text-xs font-semibold text-[var(--accent)] hover:text-slate-900"
           >
-            {mode === "signin" ? "Create account →" : "← Sign in"}
+            {mode === "signin" ? "Create account ?" : "? Sign in"}
           </button>
         </div>
 
@@ -388,7 +378,7 @@ export default function Login() {
               to="/admin/login"
               className="text-xs font-semibold text-amber-600 hover:text-amber-800"
             >
-              ← Admin Access
+              ? Admin Access
             </Link>
           </div>
         </div>

@@ -6,6 +6,11 @@ import { useCart } from "../../context/CartContext";
 import { useProducts } from "../../context/ProductsContext";
 
 const formatPrice = (value) => `PHP ${Number(value).toLocaleString("en-PH")}`;
+const getStockCount = (item) => {
+  const stock = Number(item?.stock);
+  if (!Number.isFinite(stock)) return 0;
+  return Math.max(0, Math.floor(stock));
+};
 const DEFAULT_IMAGE =
   seedProducts.find((item) => item.id === "cam-fujifilm-xs20")?.image ??
   seedProducts.find((item) => typeof item?.image === "string" && item.image.trim().length > 0)
@@ -17,6 +22,7 @@ const normalizeProduct = (item) => ({
   name: item.name ?? item.title ?? "Untitled",
   category: item.category ?? "Accessories",
   price: Number(item.price ?? 0),
+  stock: getStockCount(item),
   image: item.image ?? item.image_url ?? DEFAULT_IMAGE,
   description: item.description ?? "",
   highlights: item.highlights ?? ["Verified stock", "One-year warranty", "Local support"],
@@ -24,7 +30,7 @@ const normalizeProduct = (item) => ({
 
 export default function Product() {
   const { id } = useParams();
-  const { addItem } = useCart();
+  const { addItem, items } = useCart();
   const { products, upsertProduct } = useProducts();
   const [loading, setLoading] = useState(false);
 
@@ -40,6 +46,12 @@ export default function Product() {
     accessoryPicks.length > 0
       ? accessoryPicks.slice(0, 3)
       : products.filter((p) => p.id !== id).slice(0, 3);
+  const quantityInCart = useMemo(
+    () => Number(items.find((item) => item.id === id)?.quantity ?? 0),
+    [items, id],
+  );
+  const stockCount = getStockCount(product);
+  const availableToAdd = Math.max(0, stockCount - quantityInCart);
 
   useEffect(() => {
     if (!isSupabaseConfigured) return undefined;
@@ -106,6 +118,19 @@ export default function Product() {
           <h1 className="serif text-3xl font-semibold text-slate-900">{product.name}</h1>
           <p className="text-lg font-semibold text-[var(--accent)]">{formatPrice(product.price)}</p>
           <p className="text-sm text-slate-600">{product.description}</p>
+          <p
+            className={`text-sm font-semibold ${
+              stockCount <= 0
+                ? "text-rose-600"
+                : availableToAdd <= 2
+                  ? "text-amber-600"
+                  : "text-emerald-700"
+            }`}
+          >
+            {stockCount <= 0
+              ? "Out of stock"
+              : `${stockCount} in stock (${availableToAdd} available to add)`}
+          </p>
           <div className="grid gap-2 text-sm text-slate-600">
             {highlights.map((item) => (
               <div key={item} className="rounded-2xl border border-slate-200 bg-white px-3 py-2">
@@ -116,9 +141,14 @@ export default function Product() {
           <div className="flex gap-3 pt-2">
             <button
               onClick={() => addItem(product, 1)}
-              className="flex-1 rounded-full bg-slate-900 px-5 py-3 text-sm font-semibold text-white hover:bg-slate-800"
+              disabled={availableToAdd <= 0}
+              className={`flex-1 rounded-full px-5 py-3 text-sm font-semibold text-white ${
+                availableToAdd <= 0
+                  ? "bg-slate-300 cursor-not-allowed"
+                  : "bg-slate-900 hover:bg-slate-800"
+              }`}
             >
-              Add to cart
+              {availableToAdd <= 0 ? "Out of stock" : "Add to cart"}
             </button>
             <Link
               to="/cart"
@@ -139,26 +169,42 @@ export default function Product() {
           <Link to="/shop" className="text-sm font-semibold text-slate-600">View catalog</Link>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          {recommendations.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => addItem(item, 1)}
-              className="group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-1 hover:shadow-lg"
-              aria-label={`Add ${item.name} to cart`}
-            >
-              <div
-                className="h-32 rounded-xl bg-cover bg-center transition-transform duration-300 group-hover:scale-[1.02]"
-                style={{ backgroundImage: `url(${item.image})` }}
-                aria-label={item.name}
-              />
-              <p className="mt-3 text-sm font-semibold text-slate-900">{item.name}</p>
-              <p className="text-xs text-slate-500">{formatPrice(item.price)}</p>
-              <span className="mt-3 inline-flex rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">
-                Add to cart
-              </span>
-            </button>
-          ))}
+          {recommendations.map((item) => {
+            const inCart = Number(
+              items.find((cartItem) => cartItem.id === item.id)?.quantity ?? 0,
+            );
+            const stock = getStockCount(item);
+            const available = Math.max(0, stock - inCart);
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => addItem(item, 1)}
+                disabled={available <= 0}
+                className={`group rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition ${
+                  available <= 0
+                    ? "cursor-not-allowed opacity-65"
+                    : "hover:-translate-y-1 hover:shadow-lg"
+                }`}
+                aria-label={`Add ${item.name} to cart`}
+              >
+                <div
+                  className="h-32 rounded-xl bg-cover bg-center transition-transform duration-300 group-hover:scale-[1.02]"
+                  style={{ backgroundImage: `url(${item.image})` }}
+                  aria-label={item.name}
+                />
+                <p className="mt-3 text-sm font-semibold text-slate-900">{item.name}</p>
+                <p className="text-xs text-slate-500">{formatPrice(item.price)}</p>
+                <p className="text-xs text-slate-500">
+                  {available <= 0 ? "Out of stock" : `${available} left`}
+                </p>
+                <span className="mt-3 inline-flex rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700">
+                  {available <= 0 ? "Unavailable" : "Add to cart"}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </section>
     </div>

@@ -1,26 +1,69 @@
-﻿import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useMemo, useState } from "react";
 
 const CartContext = createContext(null);
+const INFINITE_STOCK = Number.POSITIVE_INFINITY;
+
+const toStockLimit = (item) => {
+  const stock = Number(item?.stock);
+  if (!Number.isFinite(stock)) return INFINITE_STOCK;
+  return Math.max(0, Math.floor(stock));
+};
+
+const toQuantity = (value, fallback = 1) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.floor(parsed));
+};
 
 export function CartProvider({ children }) {
   const [items, setItems] = useState([]);
 
   const addItem = (product, qty = 1) => {
+    const requestedQty = Math.max(1, toQuantity(qty, 1));
+    const stockLimit = toStockLimit(product);
+    if (stockLimit <= 0) return;
+
     setItems((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
+        const nextStock = toStockLimit(product);
+        const nextQuantity = Math.min(existing.quantity + requestedQty, nextStock);
+
         return prev.map((item) =>
-          item.id === product.id ? { ...item, quantity: item.quantity + qty } : item,
+          item.id === product.id
+            ? {
+                ...item,
+                ...product,
+                stock: nextStock,
+                quantity: nextQuantity,
+              }
+            : item,
         );
       }
-      return [...prev, { ...product, quantity: qty }];
+
+      return [
+        ...prev,
+        {
+          ...product,
+          stock: stockLimit,
+          quantity: Math.min(requestedQty, stockLimit),
+        },
+      ];
     });
   };
 
   const updateQuantity = (id, quantity) => {
     setItems((prev) =>
       prev
-        .map((item) => (item.id === id ? { ...item, quantity } : item))
+        .map((item) => {
+          if (item.id !== id) return item;
+          const stockLimit = toStockLimit(item);
+          const nextQuantity = toQuantity(quantity, item.quantity);
+          return {
+            ...item,
+            quantity: Math.min(nextQuantity, stockLimit),
+          };
+        })
         .filter((item) => item.quantity > 0),
     );
   };

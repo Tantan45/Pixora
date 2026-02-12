@@ -2,13 +2,32 @@ import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useCart } from "./context/CartContext.jsx";
 import { supabase, isSupabaseConfigured } from "./lib/supabase";
+import {
+  clearStoredAuth,
+  isAdminEmail,
+  persistAuthSession,
+  resolveAuthState,
+  signOutEverywhere,
+} from "./lib/auth";
 
 const THEME_KEY = "pixoraTheme";
+const getInitialTheme = () => {
+  if (typeof window === "undefined") return "light";
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme === "light" || savedTheme === "dark") {
+    return savedTheme;
+  }
+  const prefersDark =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches;
+  return prefersDark ? "dark" : "light";
+};
 
 const navItems = [
   { label: "Home", to: "/" },
   { label: "Shop", to: "/shop" },
   { label: "Cart", to: "/cart" },
+  { label: "Orders", to: "/orders" },
 ];
 
 export default function App({ children }) {
@@ -16,33 +35,15 @@ export default function App({ children }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [theme, setTheme] = useState("light");
+  const [theme, setTheme] = useState(getInitialTheme);
 
   useEffect(() => {
+    let isMounted = true;
     async function syncSession() {
-      if (isSupabaseConfigured) {
-        const {
-          data: { user: currentUser },
-        } = await supabase.auth.getUser();
-        setUser(currentUser);
-        const storedAdmin = localStorage.getItem("pixoraAdmin") === "true";
-        setIsAdmin(storedAdmin);
-        return;
-      }
-
-      const demoUser = localStorage.getItem("pixoraCustomer");
-      const demoAdmin = localStorage.getItem("pixoraAdmin");
-      if (demoUser) {
-        setUser({ email: demoUser, demo: true });
-        setIsAdmin(demoAdmin === "true");
-      } else if (demoAdmin === "true") {
-        const adminUser = localStorage.getItem("pixoraAdminUser");
-        setUser({ email: adminUser, demo: true, admin: true });
-        setIsAdmin(true);
-      } else {
-        setUser(null);
-        setIsAdmin(false);
-      }
+      const auth = await resolveAuthState();
+      if (!isMounted) return;
+      setUser(auth.user ?? (auth.email ? { email: auth.email, demo: true } : null));
+      setIsAdmin(Boolean(auth.isAdmin));
     }
 
     syncSession();
@@ -52,26 +53,29 @@ export default function App({ children }) {
       const {
         data: { subscription },
       } = supabase.auth.onAuthStateChange((_event, session) => {
-        setUser(session?.user ?? null);
-        const storedAdmin = localStorage.getItem("pixoraAdmin") === "true";
-        setIsAdmin(storedAdmin);
+        if (!session?.user?.email) {
+          clearStoredAuth();
+          setUser(null);
+          setIsAdmin(false);
+          return;
+        }
+
+        const authEmail = session.user.email.toLowerCase().trim();
+        const admin = isAdminEmail(authEmail);
+        persistAuthSession({ email: authEmail, isAdmin: admin });
+        setUser(session.user);
+        setIsAdmin(admin);
       });
 
-      return () => subscription.unsubscribe();
+      return () => {
+        isMounted = false;
+        subscription.unsubscribe();
+      };
     }
-  }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const savedTheme = localStorage.getItem(THEME_KEY);
-    if (savedTheme === "light" || savedTheme === "dark") {
-      setTheme(savedTheme);
-      return;
-    }
-    const prefersDark =
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(prefers-color-scheme: dark)").matches;
-    setTheme(prefersDark ? "dark" : "light");
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -87,17 +91,9 @@ export default function App({ children }) {
   }, [theme]);
 
   async function handleLogout() {
-    if (isSupabaseConfigured) {
-      await supabase.auth.signOut();
-      setUser(null);
-      setIsAdmin(false);
-    } else {
-      localStorage.removeItem("pixoraCustomer");
-      localStorage.removeItem("pixoraAdmin");
-      localStorage.removeItem("pixoraAdminUser");
-      setUser(null);
-      setIsAdmin(false);
-    }
+    await signOutEverywhere();
+    setUser(null);
+    setIsAdmin(false);
   }
 
   const toggleMenu = () => setIsMenuOpen((prev) => !prev);
@@ -140,9 +136,7 @@ export default function App({ children }) {
                 />
                 {isAdmin
                   ? "Admin"
-                  : user.email || user.demo
-                    ? user.email
-                    : "Signed in"}
+                  : user?.email ?? "Signed in"}
               </div>
             )}
 
@@ -262,7 +256,9 @@ export default function App({ children }) {
                         {isAdmin ? "Admin" : "Signed in as"}
                       </span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-600">{user.email}</p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      {user?.email ?? "Signed in"}
+                    </p>
                   </div>
                 )}
 

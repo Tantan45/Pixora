@@ -14,7 +14,9 @@ const OAUTH_HASH_MARKERS = [
   "error_description=",
 ];
 const OAUTH_QUERY_KEYS = ["code", "state", "error", "error_description"];
-const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+const isLocalHostname = (hostname) =>
+  LOCAL_HOSTNAMES.has(String(hostname ?? "").toLowerCase());
 
 const hasOAuthCallbackParams = () => {
   if (typeof window === "undefined") return false;
@@ -49,26 +51,32 @@ const clearOAuthCallbackParams = () => {
 };
 
 const resolveOAuthRedirectUrl = () => {
-  if (typeof window === "undefined") {
-    return String(import.meta.env.VITE_AUTH_REDIRECT_URL ?? "").trim();
-  }
-
-  const currentOrigin = window.location.origin;
-  const currentHostname = String(window.location.hostname ?? "").toLowerCase();
-  if (LOCAL_HOSTNAMES.has(currentHostname)) {
-    return currentOrigin;
-  }
-
   const configured = String(
     import.meta.env.VITE_AUTH_REDIRECT_URL ?? "",
   ).trim();
+
+  if (typeof window === "undefined") {
+    return configured;
+  }
+
+  const currentUrl = new URL(window.location.href);
+  const currentOrigin = currentUrl.origin;
 
   if (!configured) {
     return currentOrigin;
   }
 
   try {
-    return new URL(configured).toString();
+    const configuredUrl = new URL(configured, currentOrigin);
+    const currentIsLocal = isLocalHostname(currentUrl.hostname);
+    const configuredIsLocal = isLocalHostname(configuredUrl.hostname);
+
+    // Prevent cross-environment redirects (e.g. Vercel app -> localhost).
+    if (currentIsLocal !== configuredIsLocal) {
+      return currentOrigin;
+    }
+
+    return configuredUrl.toString();
   } catch {
     return currentOrigin;
   }

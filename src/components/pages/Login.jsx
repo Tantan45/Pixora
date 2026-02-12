@@ -7,6 +7,22 @@ import {
   persistAuthSession,
 } from "../../lib/auth";
 
+const resolveOAuthRedirectUrl = () => {
+  const configured = String(
+    import.meta.env.VITE_AUTH_REDIRECT_URL ?? "",
+  ).trim();
+
+  if (!configured) {
+    return window.location.origin;
+  }
+
+  try {
+    return new URL(configured).origin;
+  } catch {
+    return window.location.origin;
+  }
+};
+
 export default function Login() {
   const navigate = useNavigate();
   const [mode, setMode] = useState("signin");
@@ -182,7 +198,7 @@ export default function Login() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: resolveOAuthRedirectUrl(),
         },
       });
 

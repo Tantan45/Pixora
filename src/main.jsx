@@ -9,6 +9,7 @@ import AdminLogin from "./components/pages/AdminLogin.jsx";
 import Login from "./components/pages/Login.jsx";
 import Product from "./components/pages/Product.jsx";
 import Cart from "./components/pages/Cart.jsx";
+import Checkout from "./components/pages/Checkout.jsx";
 import { CartProvider } from "./context/CartContext.jsx";
 import { ProductsProvider } from "./context/ProductsContext.jsx";
 import "./index.css";
@@ -25,6 +26,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
           <Route path="/login" element={<Login />} />
           <Route path="/product/:id" element={<Product />} />
           <Route path="/cart" element={<Cart />} />
+          <Route path="/checkout" element={<Checkout />} />
         </Route>
         <Route path="/admin" element={<Admin />} />
         <Route path="/admin/login" element={<AdminLogin />} />

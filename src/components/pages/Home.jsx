@@ -1,27 +1,35 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
 import { products as seedProducts, categories, testimonials } from "../../data/products";
 import { supabase, isSupabaseConfigured } from "../../lib/supabase";
 import { useCart } from "../../context/CartContext";
 import { useProducts } from "../../context/ProductsContext";
 
-const fadeUp = {
-  hidden: { opacity: 0, y: 24 },
-  show: { opacity: 1, y: 0 },
-};
-
 const formatPrice = (value) => `PHP ${Number(value).toLocaleString("en-PH")}`;
+const DEFAULT_IMAGE =
+  seedProducts.find((item) => item.id === "cam-fujifilm-xs20")?.image ??
+  seedProducts.find((item) => typeof item?.image === "string" && item.image.trim().length > 0)
+    ?.image ??
+  "";
 
 const normalizeProduct = (item) => ({
   id: item.id ?? item.slug ?? item.name?.toLowerCase().replace(/\s+/g, "-") ?? "item",
   name: item.name ?? item.title ?? "Untitled",
   category: item.category ?? "Accessories",
   price: Number(item.price ?? 0),
-  image: item.image ?? item.image_url ?? seedProducts[0]?.image,
+  image: item.image ?? item.image_url ?? DEFAULT_IMAGE,
   description: item.description ?? "",
   highlights: item.highlights ?? [],
 });
+
+const mergeProductsById = (baseProducts, incomingProducts) => {
+  const byId = new Map(baseProducts.map((item) => [item.id, item]));
+  incomingProducts.forEach((item) => {
+    const previous = byId.get(item.id);
+    byId.set(item.id, previous ? { ...previous, ...item } : item);
+  });
+  return Array.from(byId.values());
+};
 
 export default function Home() {
   const { addItem } = useCart();
@@ -29,20 +37,34 @@ export default function Home() {
   const [status, setStatus] = useState("");
 
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    load();
-  }, []);
+    if (!isSupabaseConfigured) return undefined;
 
-  async function load() {
-    setStatus("Loading latest inventory from Supabase...");
-    const { data, error } = await supabase.from("products").select("*").limit(12);
-    if (!error && data?.length) {
-      setProducts(data.map(normalizeProduct));
-      setStatus("");
-      return;
+    let isActive = true;
+    async function loadProducts() {
+      setStatus("Loading latest inventory from Supabase...");
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .limit(12);
+      if (isActive && !error && data?.length) {
+        const normalized = data.map(normalizeProduct);
+        setProducts((prev) =>
+          mergeProductsById(mergeProductsById(seedProducts, prev), normalized),
+        );
+        setStatus("");
+        return;
+      }
+      if (isActive) {
+        setStatus("Showing curated collection.");
+      }
     }
-    setStatus("Showing curated collection.");
-  }
+
+    loadProducts();
+
+    return () => {
+      isActive = false;
+    };
+  }, [setProducts]);
 
   const featured = useMemo(() => products.slice(0, 6), [products]);
   const accessories = useMemo(() => products.filter((p) => p.category === "Accessories").slice(0, 3), [products]);
@@ -50,7 +72,7 @@ export default function Home() {
   return (
     <div className="space-y-16">
       <section className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr] items-center">
-        <motion.div initial="hidden" animate="show" variants={fadeUp} transition={{ duration: 0.6 }}>
+        <div>
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">Pixora Store</p>
           <h1 className="serif mt-4 text-4xl sm:text-5xl font-semibold text-slate-900 leading-tight">
             Camera kits and accessories tuned for modern storytellers.
@@ -73,13 +95,8 @@ export default function Home() {
             </Link>
           </div>
           {status && <p className="mt-4 text-xs text-slate-500">{status}</p>}
-        </motion.div>
-        <motion.div
-          initial={{ opacity: 0, scale: 0.96 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6, delay: 0.1 }}
-          className="grid gap-4 sm:grid-cols-2"
-        >
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
           {featured.slice(0, 4).map((item) => (
             <Link
               key={item.id}
@@ -99,7 +116,7 @@ export default function Home() {
               </div>
             </Link>
           ))}
-        </motion.div>
+        </div>
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
@@ -123,10 +140,9 @@ export default function Home() {
         </div>
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {featured.map((product) => (
-            <motion.div
+            <div
               key={product.id}
-              whileHover={{ y: -6 }}
-              className="group rounded-3xl border border-slate-200 bg-white p-4 shadow-sm"
+              className="group rounded-3xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-1"
             >
               <Link to={`/product/${product.id}`} className="block" aria-label={`View ${product.name}`}>
                 <div
@@ -154,7 +170,7 @@ export default function Home() {
                   View
                 </Link>
               </div>
-            </motion.div>
+            </div>
           ))}
         </div>
       </section>

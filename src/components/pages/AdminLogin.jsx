@@ -26,8 +26,12 @@ export default function AdminLogin() {
       <div className="relative z-10 mx-auto max-w-xl px-4 py-16">
         <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm space-y-4">
           <div>
-            <p className="text-sm font-semibold text-[var(--accent)]">Admin Access</p>
-            <h1 className="serif mt-2 text-3xl font-semibold text-slate-900">Sign in to Pixora Admin</h1>
+            <p className="text-sm font-semibold text-[var(--accent)]">
+              Admin Access
+            </p>
+            <h1 className="serif mt-2 text-3xl font-semibold text-slate-900">
+              Sign in to Pixora Admin
+            </h1>
             <p className="mt-3 text-sm text-slate-600">
               This demo uses a local access code stored in the browser.
             </p>

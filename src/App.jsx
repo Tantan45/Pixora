@@ -1,29 +1,118 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { useCart } from "./context/CartContext.jsx";
+import { supabase, isSupabaseConfigured } from "./lib/supabase";
+
+const THEME_KEY = "pixoraTheme";
 
 const navItems = [
   { label: "Home", to: "/" },
   { label: "Shop", to: "/shop" },
   { label: "Cart", to: "/cart" },
-  { label: "Account", to: "/login", mobileLabel: "Acc" },
 ];
 
 export default function App({ children }) {
   const { itemCount } = useCart();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [theme, setTheme] = useState("light");
+
+  useEffect(() => {
+    async function syncSession() {
+      if (isSupabaseConfigured) {
+        const {
+          data: { user: currentUser },
+        } = await supabase.auth.getUser();
+        setUser(currentUser);
+        const storedAdmin = localStorage.getItem("pixoraAdmin") === "true";
+        setIsAdmin(storedAdmin);
+        return;
+      }
+
+      const demoUser = localStorage.getItem("pixoraCustomer");
+      const demoAdmin = localStorage.getItem("pixoraAdmin");
+      if (demoUser) {
+        setUser({ email: demoUser, demo: true });
+        setIsAdmin(demoAdmin === "true");
+      } else if (demoAdmin === "true") {
+        const adminUser = localStorage.getItem("pixoraAdminUser");
+        setUser({ email: adminUser, demo: true, admin: true });
+        setIsAdmin(true);
+      } else {
+        setUser(null);
+        setIsAdmin(false);
+      }
+    }
+
+    syncSession();
+
+    // Listen for auth changes
+    if (isSupabaseConfigured) {
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+        setUser(session?.user ?? null);
+        const storedAdmin = localStorage.getItem("pixoraAdmin") === "true";
+        setIsAdmin(storedAdmin);
+      });
+
+      return () => subscription.unsubscribe();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    if (savedTheme === "light" || savedTheme === "dark") {
+      setTheme(savedTheme);
+      return;
+    }
+    const prefersDark =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
+    setTheme(prefersDark ? "dark" : "light");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const root = document.documentElement;
+    root.classList.add("theme-switching");
+    root.setAttribute("data-theme", theme);
+    localStorage.setItem(THEME_KEY, theme);
+    const timer = window.setTimeout(() => {
+      root.classList.remove("theme-switching");
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [theme]);
+
+  async function handleLogout() {
+    if (isSupabaseConfigured) {
+      await supabase.auth.signOut();
+      setUser(null);
+      setIsAdmin(false);
+    } else {
+      localStorage.removeItem("pixoraCustomer");
+      localStorage.removeItem("pixoraAdmin");
+      localStorage.removeItem("pixoraAdminUser");
+      setUser(null);
+      setIsAdmin(false);
+    }
+  }
 
   const toggleMenu = () => setIsMenuOpen((prev) => !prev);
   const closeMenu = () => setIsMenuOpen(false);
 
   return (
     <div className="min-h-screen bg-[var(--canvas)] text-[var(--ink)]">
-      <div className="pointer-events-none fixed inset-x-0 top-0 h-64 bg-gradient-to-br from-gray via-transparent to-amber-100/60" />
+      <div className="app-atmosphere pointer-events-none fixed inset-x-0 top-0 h-64" />
+
       <header className="sticky top-0 z-30 border-b border-slate-200/70 bg-white/80 backdrop-blur relative">
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-4">
           <Link to="/" className="text-xl font-semibold serif tracking-tight">
             Pixora
           </Link>
+
           <nav className="hidden md:flex items-center gap-4 text-sm font-semibold">
             {navItems.map((item) => (
               <NavLink
@@ -41,11 +130,56 @@ export default function App({ children }) {
               </NavLink>
             ))}
           </nav>
+
           <div className="ml-auto hidden md:flex items-center gap-3">
+            {/* User status indicator */}
+            {user && (
+              <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                <span
+                  className={`h-2 w-2 rounded-full ${isAdmin ? "bg-amber-500" : "bg-green-500"}`}
+                />
+                {isAdmin
+                  ? "Admin"
+                  : user.email || user.demo
+                    ? user.email
+                    : "Signed in"}
+              </div>
+            )}
+
             <div className="hidden lg:flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-[var(--accent)]" />
               Shipping in 2 to 5 days
             </div>
+
+            <div
+              className="inline-flex items-center rounded-full border border-slate-200 bg-white p-1"
+              role="group"
+              aria-label="Theme switch"
+            >
+              <button
+                type="button"
+                onClick={() => setTheme("light")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  theme === "light"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                Light
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme("dark")}
+                className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  theme === "dark"
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100"
+                }`}
+              >
+                Night
+              </button>
+            </div>
+
             <Link
               to="/cart"
               className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300"
@@ -55,13 +189,24 @@ export default function App({ children }) {
                 {itemCount}
               </span>
             </Link>
-            <Link
-              to="/login"
-              className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
-            >
-              Sign in
-            </Link>
+
+            {user ? (
+              <button
+                onClick={handleLogout}
+                className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+              >
+                Sign out
+              </button>
+            ) : (
+              <Link
+                to="/login"
+                className="rounded-full bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90"
+              >
+                Sign in
+              </Link>
+            )}
           </div>
+
           <button
             type="button"
             onClick={toggleMenu}
@@ -92,6 +237,7 @@ export default function App({ children }) {
             </span>
           </button>
         </div>
+
         {isMenuOpen && (
           <>
             <button
@@ -104,30 +250,92 @@ export default function App({ children }) {
               id="mobile-nav"
               className="absolute inset-x-0 top-full z-30 border-b border-slate-200 bg-white/95 backdrop-blur md:hidden"
             >
-              <div className="mx-auto grid max-w-6xl gap-2 px-4 py-4 text-sm font-semibold">
+              <div className="mx-auto max-w-6xl px-4 py-4 space-y-2">
+                {/* User status in mobile */}
+                {user && (
+                  <div className="rounded-2xl bg-slate-100 px-4 py-3 text-sm">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`h-2 w-2 rounded-full ${isAdmin ? "bg-amber-500" : "bg-green-500"}`}
+                      />
+                      <span className="font-semibold text-slate-900">
+                        {isAdmin ? "Admin" : "Signed in as"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600">{user.email}</p>
+                  </div>
+                )}
+
+                <div
+                  className="inline-flex items-center rounded-full border border-slate-200 bg-white p-1"
+                  role="group"
+                  aria-label="Theme switch"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setTheme("light")}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      theme === "light"
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    Light
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTheme("dark")}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                      theme === "dark"
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                  >
+                    Night
+                  </button>
+                </div>
+
                 {navItems.map((item) => (
                   <NavLink
                     key={item.label}
                     to={item.to}
                     onClick={closeMenu}
                     className={({ isActive }) =>
-                      `rounded-2xl px-4 py-3 transition ${
+                      `rounded-2xl px-4 py-3 transition flex items-center justify-between font-semibold ${
                         isActive
                           ? "bg-slate-900 text-white"
                           : "text-slate-700 hover:bg-slate-100"
                       }`
                     }
                   >
-                    <span className="flex items-center justify-between">
-                      <span>{item.mobileLabel ?? item.label}</span>
-                      {item.label === "Cart" ? (
-                        <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-white">
-                          {itemCount}
-                        </span>
-                      ) : null}
-                    </span>
+                    <span>{item.label}</span>
+                    {item.label === "Cart" && (
+                      <span className="rounded-full bg-slate-900 px-2 py-0.5 text-xs text-white">
+                        {itemCount}
+                      </span>
+                    )}
                   </NavLink>
                 ))}
+
+                {user ? (
+                  <button
+                    onClick={() => {
+                      handleLogout();
+                      closeMenu();
+                    }}
+                    className="w-full rounded-2xl px-4 py-3 text-left font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    Sign out
+                  </button>
+                ) : (
+                  <NavLink
+                    to="/login"
+                    onClick={closeMenu}
+                    className="rounded-2xl px-4 py-3 bg-[var(--accent)] text-white font-semibold text-center block"
+                  >
+                    Sign in
+                  </NavLink>
+                )}
               </div>
             </div>
           </>

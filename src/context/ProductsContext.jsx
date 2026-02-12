@@ -1,52 +1,128 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { products as seedProducts } from "../data/products";
 
 const STORAGE_KEY = "pixoraProducts";
 const ProductsContext = createContext(null);
+const hasImage = (item) =>
+  typeof item?.image === "string" && item.image.trim().length > 0;
+const REMOVED_PRODUCT_IDS = new Set([
+  "cam-fujifilm-x1",
+  "cam-fujifilm-xt5",
+  "cam-fujifilm-xe4",
+  "cam-fujifilm-xt30-ii",
+  "cam-fujifilm-gfx100s",
+]);
+const SEED_IMAGE_BY_ID = new Map(
+  seedProducts
+    .filter(
+      (item) =>
+        item &&
+        typeof item.id === "string" &&
+        item.id.trim() &&
+        typeof item.image === "string" &&
+        item.image.trim().length > 0,
+    )
+    .map((item) => [item.id, item.image]),
+);
+
+const isVisibleProduct = (item) =>
+  item &&
+  typeof item.id === "string" &&
+  item.id.trim() &&
+  !REMOVED_PRODUCT_IDS.has(item.id) &&
+  hasImage(item);
+
+const withSeedImage = (item) => {
+  if (!item || typeof item !== "object") return item;
+  const seedImage = SEED_IMAGE_BY_ID.get(item.id);
+  if (!seedImage) return item;
+  return { ...item, image: seedImage };
+};
+
+const sanitizeProducts = (items) =>
+  (Array.isArray(items) ? items : [])
+    .map((item) => withSeedImage(item))
+    .filter((item) => isVisibleProduct(item));
+
+const mergeSeedProducts = (storedProducts) => {
+  const validStored = sanitizeProducts(storedProducts);
+  const storedIds = new Set(validStored.map((item) => item.id));
+  const missingSeed = sanitizeProducts(seedProducts).filter(
+    (item) => !storedIds.has(item.id),
+  );
+  return [...validStored, ...missingSeed];
+};
 
 const loadProducts = () => {
-  if (typeof window === "undefined") return seedProducts;
+  if (typeof window === "undefined") return sanitizeProducts(seedProducts);
   const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return seedProducts;
+  if (!stored) return sanitizeProducts(seedProducts);
   try {
     const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) && parsed.length ? parsed : seedProducts;
+    if (!Array.isArray(parsed) || !parsed.length)
+      return sanitizeProducts(seedProducts);
+    return mergeSeedProducts(parsed);
   } catch {
-    return seedProducts;
+    return sanitizeProducts(seedProducts);
   }
 };
 
 export function ProductsProvider({ children }) {
-  const [products, setProducts] = useState(loadProducts);
+  const [products, setProductsState] = useState(loadProducts);
+
+  useEffect(() => {
+    // Self-heal persisted state so the full default catalog is always present.
+    setProductsState((prev) => mergeSeedProducts(prev));
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
   }, [products]);
 
-  const addProduct = (product) => {
-    setProducts((prev) => [product, ...prev]);
-  };
+  const setProducts = useCallback((next) => {
+    setProductsState((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      return sanitizeProducts(resolved);
+    });
+  }, []);
 
-  const updateProduct = (id, patch) => {
-    setProducts((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+  const addProduct = useCallback((product) => {
+    if (!isVisibleProduct(product)) return;
+    setProductsState((prev) => sanitizeProducts([product, ...prev]));
+  }, []);
+
+  const updateProduct = useCallback((id, patch) => {
+    setProductsState((prev) =>
+      sanitizeProducts(
+        prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      ),
     );
-  };
+  }, []);
 
-  const removeProduct = (id) => {
-    setProducts((prev) => prev.filter((item) => item.id !== id));
-  };
+  const removeProduct = useCallback((id) => {
+    setProductsState((prev) => prev.filter((item) => item.id !== id));
+  }, []);
 
-  const upsertProduct = (product) => {
-    setProducts((prev) => {
+  const upsertProduct = useCallback((product) => {
+    setProductsState((prev) => {
+      if (!isVisibleProduct(product)) {
+        return prev.filter((item) => item.id !== product?.id);
+      }
       const index = prev.findIndex((item) => item.id === product.id);
-      if (index === -1) return [product, ...prev];
+      if (index === -1) return sanitizeProducts([product, ...prev]);
       const next = [...prev];
       next[index] = { ...prev[index], ...product };
-      return next;
+      return sanitizeProducts(next);
     });
-  };
+  }, []);
 
   const value = useMemo(
     () => ({
@@ -57,7 +133,7 @@ export function ProductsProvider({ children }) {
       removeProduct,
       upsertProduct,
     }),
-    [products],
+    [products, addProduct, updateProduct, removeProduct, upsertProduct],
   );
 
   return <ProductsContext.Provider value={value}>{children}</ProductsContext.Provider>;

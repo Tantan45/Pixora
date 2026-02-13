@@ -104,7 +104,7 @@ const resolveAuthRedirectBaseUrl = () => {
 const resolveAuthRedirectUrl = (pathname = "/admin/login") => {
   const base = resolveAuthRedirectBaseUrl();
   const fallbackOrigin =
-    typeof window !== "undefined" ? window.location.origin : "http://localhost:5173";
+    typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
 
   try {
     const url = new URL(base || fallbackOrigin, fallbackOrigin);

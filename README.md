@@ -20,7 +20,7 @@ If you are developing a production application, we recommend using TypeScript wi
 1. Copy `.env.example` to `.env` and set:
    - `VITE_SUPABASE_URL`
    - `VITE_SUPABASE_ANON_KEY`
-   - `VITE_AUTH_REDIRECT_URL` (recommended, e.g. `http://localhost:5173` in local)
+   - `VITE_AUTH_REDIRECT_URL` (recommended, e.g. `http://localhost:3000` in local)
 2. In Vercel Project Settings -> Environment Variables, add the same two variables.
 3. In Supabase Authentication -> URL Configuration:
    - Set Site URL to your Vercel domain.

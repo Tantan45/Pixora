@@ -248,6 +248,28 @@ export default function AdminLogin() {
       return;
     }
 
+    // Allow the demo access code as a fallback even when Supabase is configured.
+    // This keeps the old "pixora-admin" flow working for local demos.
+    if (password.trim() === ADMIN_ACCESS_CODE) {
+      setIsLoading(true);
+      setStatus("Signing in with access code...");
+      setStatusType("loading");
+
+      try {
+        // Ensure Supabase session doesn't override local-admin auth state.
+        await supabase.auth.signOut();
+      } catch {
+        // Ignore errors
+      }
+
+      persistAuthSession({ email: normalizedEmail, isAdmin: true });
+      setStatus("Signed in.");
+      setStatusType("success");
+      setIsLoading(false);
+      navigate("/admin", { replace: true });
+      return;
+    }
+
     setIsLoading(true);
     setStatus("Signing in...");
     setStatusType("loading");

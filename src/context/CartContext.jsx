@@ -1,7 +1,17 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
+import { useNavigate } from "react-router-dom";
+import { getStoredAuth } from "../lib/auth";
 
 const CartContext = createContext(null);
 const INFINITE_STOCK = Number.POSITIVE_INFINITY;
+const POST_AUTH_REDIRECT_KEY = "pixoraPostAuthRedirect";
+const AUTH_NOTICE_KEY = "pixoraAuthNotice";
 
 const toStockLimit = (item) => {
   const stock = Number(item?.stock);
@@ -16,12 +26,33 @@ const toQuantity = (value, fallback = 1) => {
 };
 
 export function CartProvider({ children }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState([]);
 
-  const addItem = (product, qty = 1) => {
+  const ensureSignedIn = useCallback(() => {
+    const auth = getStoredAuth();
+    if (auth.isAuthenticated && auth.email) return true;
+
+    if (typeof window !== "undefined") {
+      try {
+        const nextUrl = `${window.location.pathname}${window.location.search}`;
+        sessionStorage.setItem(POST_AUTH_REDIRECT_KEY, nextUrl);
+        sessionStorage.setItem(AUTH_NOTICE_KEY, "cart");
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+
+    navigate("/login");
+    return false;
+  }, [navigate]);
+
+  const addItem = useCallback((product, qty = 1) => {
+    if (!ensureSignedIn()) return false;
+
     const requestedQty = Math.max(1, toQuantity(qty, 1));
     const stockLimit = toStockLimit(product);
-    if (stockLimit <= 0) return;
+    if (stockLimit <= 0) return false;
 
     setItems((prev) => {
       const existing = prev.find((item) => item.id === product.id);
@@ -50,9 +81,11 @@ export function CartProvider({ children }) {
         },
       ];
     });
-  };
 
-  const updateQuantity = (id, quantity) => {
+    return true;
+  }, [ensureSignedIn]);
+
+  const updateQuantity = useCallback((id, quantity) => {
     setItems((prev) =>
       prev
         .map((item) => {
@@ -66,13 +99,13 @@ export function CartProvider({ children }) {
         })
         .filter((item) => item.quantity > 0),
     );
-  };
+  }, []);
 
-  const removeItem = (id) => {
+  const removeItem = useCallback((id) => {
     setItems((prev) => prev.filter((item) => item.id !== id));
-  };
+  }, []);
 
-  const clearCart = () => setItems([]);
+  const clearCart = useCallback(() => setItems([]), []);
 
   const summary = useMemo(() => {
     const itemCount = items.reduce((acc, item) => acc + item.quantity, 0);
@@ -90,7 +123,7 @@ export function CartProvider({ children }) {
       itemCount: summary.itemCount,
       subtotal: summary.subtotal,
     }),
-    [items, summary],
+    [items, summary, addItem, updateQuantity, removeItem, clearCart],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

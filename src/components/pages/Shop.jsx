@@ -106,7 +106,8 @@ export default function Shop() {
     const currentInCart = Number(cartQuantityById[product.id] ?? 0);
     if (currentInCart >= stock) return;
 
-    addItem(product, 1);
+    const added = addItem(product, 1);
+    if (!added) return;
     setRecentlyAddedId(product.id);
     setSelectedProduct(product);
     setIsAddedModalOpen(true);

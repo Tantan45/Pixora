@@ -24,6 +24,26 @@ const OAUTH_QUERY_KEYS = [
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const isLocalHostname = (hostname) =>
   LOCAL_HOSTNAMES.has(String(hostname ?? "").toLowerCase());
+const POST_AUTH_REDIRECT_KEY = "pixoraPostAuthRedirect";
+const AUTH_NOTICE_KEY = "pixoraAuthNotice";
+
+const consumePostAuthRedirect = (fallbackPath) => {
+  if (typeof window === "undefined") return fallbackPath;
+
+  try {
+    const next = sessionStorage.getItem(POST_AUTH_REDIRECT_KEY);
+    sessionStorage.removeItem(POST_AUTH_REDIRECT_KEY);
+    sessionStorage.removeItem(AUTH_NOTICE_KEY);
+
+    if (typeof next === "string" && next.startsWith("/")) {
+      return next;
+    }
+  } catch {
+    // Ignore storage errors.
+  }
+
+  return fallbackPath;
+};
 
 const hasPasswordRecoveryParams = () => {
   if (typeof window === "undefined") return false;
@@ -168,6 +188,18 @@ export default function Login() {
       setStatusType("loading");
     }
 
+    if (!hasPasswordRecoveryParams() && typeof window !== "undefined") {
+      try {
+        const notice = sessionStorage.getItem(AUTH_NOTICE_KEY);
+        if (notice === "cart") {
+          setStatus("Please sign in first to add items to your cart.");
+          setStatusType("error");
+        }
+      } catch {
+        // Ignore storage errors.
+      }
+    }
+
     checkExistingSession();
 
     if (isSupabaseConfigured) {
@@ -206,7 +238,8 @@ export default function Login() {
           setIsLoading(false);
 
           setTimeout(() => {
-            navigate(admin ? "/admin" : "/");
+            const fallback = admin ? "/admin" : "/";
+            navigate(consumePostAuthRedirect(fallback));
           }, 1000);
         }
       });
@@ -256,7 +289,8 @@ export default function Login() {
         );
         setStatusType("success");
         setIsLoading(false);
-        setTimeout(() => navigate(admin ? "/admin" : "/"), 900);
+        const fallback = admin ? "/admin" : "/";
+        setTimeout(() => navigate(consumePostAuthRedirect(fallback)), 900);
       }, 600);
       return;
     }
@@ -289,7 +323,7 @@ export default function Login() {
             : `? Welcome back! Signed in as ${normalizedEmail}`,
         );
         setStatusType("success");
-        setTimeout(() => navigate(admin ? "/admin" : "/"), 900);
+        // Navigate happens via onAuthStateChange so OAuth/password flows share the same redirect logic.
       } else {
         setStatus(
           "? Account created! Please check your email to verify your account.",

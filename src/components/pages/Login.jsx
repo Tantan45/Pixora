@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { supabase, isSupabaseConfigured } from "../../lib/supabase";
 import {
@@ -13,10 +13,29 @@ const OAUTH_HASH_MARKERS = [
   "provider_token=",
   "error_description=",
 ];
-const OAUTH_QUERY_KEYS = ["code", "state", "error", "error_description"];
+const OAUTH_QUERY_KEYS = [
+  "code",
+  "state",
+  "error",
+  "error_description",
+  "type",
+  "token_hash",
+];
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 const isLocalHostname = (hostname) =>
   LOCAL_HOSTNAMES.has(String(hostname ?? "").toLowerCase());
+
+const hasPasswordRecoveryParams = () => {
+  if (typeof window === "undefined") return false;
+  const hash = String(window.location.hash ?? "").toLowerCase();
+  const search = new URLSearchParams(window.location.search ?? "");
+  return (
+    search.get("type") === "recovery" ||
+    search.has("token_hash") ||
+    hash.includes("type=recovery") ||
+    hash.includes("recovery")
+  );
+};
 
 const hasOAuthCallbackParams = () => {
   if (typeof window === "undefined") return false;
@@ -50,7 +69,7 @@ const clearOAuthCallbackParams = () => {
   );
 };
 
-const resolveOAuthRedirectUrl = () => {
+const resolveAuthRedirectBaseUrl = () => {
   const configured = String(
     import.meta.env.VITE_AUTH_REDIRECT_URL ?? "",
   ).trim();
@@ -82,47 +101,41 @@ const resolveOAuthRedirectUrl = () => {
   }
 };
 
+const resolveAuthRedirectUrl = (pathname = "/") => {
+  const base = resolveAuthRedirectBaseUrl();
+  const fallbackOrigin =
+    typeof window !== "undefined" ? window.location.origin : "http://localhost:5173";
+
+  try {
+    const url = new URL(base || fallbackOrigin, fallbackOrigin);
+    url.pathname = pathname;
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return `${fallbackOrigin}${pathname}`;
+  }
+};
+
 export default function Login() {
   const navigate = useNavigate();
   const [mode, setMode] = useState("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isResetPasswordVisible, setIsResetPasswordVisible] = useState(false);
+  const [isRecoveryMode, setIsRecoveryMode] = useState(() =>
+    hasPasswordRecoveryParams(),
+  );
   const [status, setStatus] = useState("");
   const [statusType, setStatusType] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    checkExistingSession();
+  const checkExistingSession = useCallback(async () => {
+    if (isRecoveryMode || hasPasswordRecoveryParams()) return;
 
-    if (isSupabaseConfigured) {
-      const {
-        data: { subscription },
-      } = supabase.auth.onAuthStateChange((_event, session) => {
-        if (!session?.user) return;
-
-        const authEmail = (session.user.email ?? "").toLowerCase().trim();
-        const admin = isAdminEmail(authEmail);
-        persistAuthSession({ email: authEmail, isAdmin: admin });
-        if (hasOAuthCallbackParams()) {
-          clearOAuthCallbackParams();
-        }
-
-        setStatus("? Signed in successfully!");
-        setStatusType("success");
-        setIsLoading(false);
-
-        setTimeout(() => {
-          navigate(admin ? "/admin" : "/");
-        }, 1000);
-      });
-
-      return () => subscription.unsubscribe();
-    }
-
-    return undefined;
-  }, [navigate]);
-
-  async function checkExistingSession() {
     if (isSupabaseConfigured) {
       const {
         data: { user },
@@ -146,10 +159,72 @@ export default function Login() {
         : `Already signed in as ${stored.email}`,
     );
     setStatusType("success");
-  }
+  }, [isRecoveryMode]);
+
+  useEffect(() => {
+    if (hasPasswordRecoveryParams()) {
+      setIsRecoveryMode(true);
+      setStatus("Set your new password to finish account recovery.");
+      setStatusType("loading");
+    }
+
+    checkExistingSession();
+
+    if (isSupabaseConfigured) {
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((event, session) => {
+        if (event === "PASSWORD_RECOVERY" || hasPasswordRecoveryParams()) {
+          setIsRecoveryMode(true);
+          setMode("signin");
+          setPassword("");
+          setResetPassword("");
+          setResetPasswordConfirm("");
+          setIsPasswordVisible(false);
+          setIsResetPasswordVisible(false);
+          setStatus("Set your new password to finish account recovery.");
+          setStatusType("loading");
+          if (hasOAuthCallbackParams()) {
+            clearOAuthCallbackParams();
+          }
+          setIsLoading(false);
+          return;
+        }
+
+        if (!session?.user) return;
+
+        const authEmail = (session.user.email ?? "").toLowerCase().trim();
+        const admin = isAdminEmail(authEmail);
+        persistAuthSession({ email: authEmail, isAdmin: admin });
+        if (hasOAuthCallbackParams()) {
+          clearOAuthCallbackParams();
+        }
+
+        if (!isRecoveryMode) {
+          setStatus("? Signed in successfully!");
+          setStatusType("success");
+          setIsLoading(false);
+
+          setTimeout(() => {
+            navigate(admin ? "/admin" : "/");
+          }, 1000);
+        }
+      });
+
+      return () => subscription.unsubscribe();
+    }
+
+    return undefined;
+  }, [navigate, checkExistingSession, isRecoveryMode]);
 
   async function handleSubmit(event) {
     event.preventDefault();
+
+    if (isRecoveryMode) {
+      await handlePasswordResetSubmit();
+      return;
+    }
+
     setIsLoading(true);
     setStatus("");
     setStatusType("");
@@ -234,11 +309,121 @@ export default function Login() {
     }
   }
 
+  async function handleForgotPassword() {
+    const normalizedEmail = email.toLowerCase().trim();
+    if (!normalizedEmail) {
+      setStatus("Enter your email first so we can send a reset link.");
+      setStatusType("error");
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      setStatus("Password recovery needs Supabase auth to be configured.");
+      setStatusType("error");
+      return;
+    }
+
+    setIsLoading(true);
+    setStatus("Sending password reset email...");
+    setStatusType("loading");
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo: resolveAuthRedirectUrl("/login"),
+      });
+
+      if (error) {
+        setStatus(`? ${error.message}`);
+        setStatusType("error");
+        return;
+      }
+
+      setStatus("Reset link sent. Check your inbox and open the email link.");
+      setStatusType("success");
+    } catch (err) {
+      setStatus(`? An unexpected error occurred: ${err.message}`);
+      setStatusType("error");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handlePasswordResetSubmit() {
+    if (!isSupabaseConfigured) {
+      setStatus("Password recovery needs Supabase auth to be configured.");
+      setStatusType("error");
+      return;
+    }
+
+    if (!resetPassword.trim() || !resetPasswordConfirm.trim()) {
+      setStatus("Please fill in both new password fields.");
+      setStatusType("error");
+      return;
+    }
+
+    if (resetPassword.length < 6) {
+      setStatus("New password must be at least 6 characters.");
+      setStatusType("error");
+      return;
+    }
+
+    if (resetPassword !== resetPasswordConfirm) {
+      setStatus("New password and confirmation do not match.");
+      setStatusType("error");
+      return;
+    }
+
+    setIsLoading(true);
+    setStatus("Updating your password...");
+    setStatusType("loading");
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) {
+        setStatus("Reset session expired. Request a new reset email.");
+        setStatusType("error");
+        return;
+      }
+
+      const { error } = await supabase.auth.updateUser({
+        password: resetPassword,
+      });
+
+      if (error) {
+        setStatus(`? ${error.message}`);
+        setStatusType("error");
+        return;
+      }
+
+      clearOAuthCallbackParams();
+      await supabase.auth.signOut();
+      setIsRecoveryMode(false);
+      setMode("signin");
+      setPassword("");
+      setResetPassword("");
+      setResetPasswordConfirm("");
+      setIsPasswordVisible(false);
+      setIsResetPasswordVisible(false);
+      setStatus("Password updated. Sign in using your new password.");
+      setStatusType("success");
+    } catch (err) {
+      setStatus(`? An unexpected error occurred: ${err.message}`);
+      setStatusType("error");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
   function handleModeSwitch() {
+    if (isRecoveryMode) return;
     setMode(mode === "signin" ? "signup" : "signin");
     setStatus("");
     setStatusType("");
     setPassword("");
+    setIsPasswordVisible(false);
   }
 
   async function handleGoogleSignIn() {
@@ -260,7 +445,7 @@ export default function Login() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
-          redirectTo: resolveOAuthRedirectUrl(),
+          redirectTo: resolveAuthRedirectUrl("/"),
         },
       });
 
@@ -307,15 +492,21 @@ export default function Login() {
       >
         <div className="flex items-center justify-between">
           <h2 className="text-2xl font-semibold text-slate-900">
-            {mode === "signin" ? "Sign in" : "Create account"}
+            {isRecoveryMode
+              ? "Reset password"
+              : mode === "signin"
+                ? "Sign in"
+                : "Create account"}
           </h2>
-          <button
-            type="button"
-            onClick={handleModeSwitch}
-            className="text-xs font-semibold text-[var(--accent)] hover:text-slate-900"
-          >
-            {mode === "signin" ? "Create account ?" : "? Sign in"}
-          </button>
+          {!isRecoveryMode && (
+            <button
+              type="button"
+              onClick={handleModeSwitch}
+              className="text-xs font-semibold text-[var(--accent)] hover:text-slate-900"
+            >
+              {mode === "signin" ? "Create account ?" : "? Sign in"}
+            </button>
+          )}
         </div>
 
         <label className="text-sm font-semibold text-slate-700 block">
@@ -331,28 +522,109 @@ export default function Login() {
           />
         </label>
 
-        <label className="text-sm font-semibold text-slate-700 block">
-          Password
-          <input
-            type="password"
-            className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition"
-            placeholder={
-              mode === "signin"
-                ? "Enter your password"
-                : "At least 6 characters"
-            }
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-            disabled={isLoading}
-            minLength={6}
-          />
-          {mode === "signup" && (
-            <p className="mt-1 text-xs text-slate-500">
-              Minimum 6 characters required
-            </p>
-          )}
-        </label>
+        {isRecoveryMode ? (
+          <div className="space-y-4">
+            <label className="text-sm font-semibold text-slate-700 block">
+              New password
+              <div className="mt-2 relative">
+                <input
+                  type={isResetPasswordVisible ? "text" : "password"}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 pr-16 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition"
+                  placeholder="At least 6 characters"
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                  required
+                  disabled={isLoading}
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  aria-pressed={isResetPasswordVisible}
+                  aria-label={
+                    isResetPasswordVisible ? "Hide password" : "Show password"
+                  }
+                  onClick={() => setIsResetPasswordVisible((prev) => !prev)}
+                  className="absolute inset-y-0 right-3 my-auto text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-60"
+                >
+                  {isResetPasswordVisible ? "Hide" : "Show"}
+                </button>
+              </div>
+            </label>
+            <label className="text-sm font-semibold text-slate-700 block">
+              Confirm new password
+              <div className="mt-2 relative">
+                <input
+                  type={isResetPasswordVisible ? "text" : "password"}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 pr-16 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition"
+                  placeholder="Re-enter new password"
+                  value={resetPasswordConfirm}
+                  onChange={(event) => setResetPasswordConfirm(event.target.value)}
+                  required
+                  disabled={isLoading}
+                  minLength={6}
+                />
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  aria-pressed={isResetPasswordVisible}
+                  aria-label={
+                    isResetPasswordVisible ? "Hide password" : "Show password"
+                  }
+                  onClick={() => setIsResetPasswordVisible((prev) => !prev)}
+                  className="absolute inset-y-0 right-3 my-auto text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-60"
+                >
+                  {isResetPasswordVisible ? "Hide" : "Show"}
+                </button>
+              </div>
+            </label>
+          </div>
+        ) : (
+          <label className="text-sm font-semibold text-slate-700 block">
+            Password
+            <div className="mt-2 relative">
+              <input
+                type={isPasswordVisible ? "text" : "password"}
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 pr-16 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] transition"
+                placeholder={
+                  mode === "signin"
+                    ? "Enter your password"
+                    : "At least 6 characters"
+                }
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                disabled={isLoading}
+                minLength={6}
+              />
+              <button
+                type="button"
+                disabled={isLoading}
+                aria-pressed={isPasswordVisible}
+                aria-label={isPasswordVisible ? "Hide password" : "Show password"}
+                onClick={() => setIsPasswordVisible((prev) => !prev)}
+                className="absolute inset-y-0 right-3 my-auto text-xs font-semibold text-slate-600 hover:text-slate-900 disabled:opacity-60"
+              >
+                {isPasswordVisible ? "Hide" : "Show"}
+              </button>
+            </div>
+            {mode === "signup" && (
+              <p className="mt-1 text-xs text-slate-500">
+                Minimum 6 characters required
+              </p>
+            )}
+            {mode === "signin" && isSupabaseConfigured && (
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={isLoading}
+                className="mt-2 text-xs font-semibold text-[var(--accent)] hover:text-slate-900 disabled:opacity-60"
+              >
+                Forgot password?
+              </button>
+            )}
+          </label>
+        )}
 
         {status && (
           <div
@@ -410,13 +682,15 @@ export default function Login() {
               </svg>
               Processing...
             </span>
+          ) : isRecoveryMode ? (
+            "Update password"
           ) : mode === "signin" ? (
             "Sign in to your account"
           ) : (
             "Create new account"
           )}
         </button>
-        {isSupabaseConfigured && (
+        {isSupabaseConfigured && !isRecoveryMode && (
           <button
             type="button"
             onClick={handleGoogleSignIn}
@@ -446,18 +720,41 @@ export default function Login() {
         )}
 
         <div className="pt-4 border-t border-slate-200 space-y-3">
-          <p className="text-xs text-slate-500 text-center">
-            {mode === "signin"
-              ? "New to Pixora? Create an account to save your preferences and track orders."
-              : "Already have an account? Sign in to access your workspace."}
-          </p>
+          {isRecoveryMode ? (
+            <p className="text-xs text-slate-500 text-center">
+              Opened from reset email? Set your new password above, then sign in.
+            </p>
+          ) : (
+            <p className="text-xs text-slate-500 text-center">
+              {mode === "signin"
+                ? "New to Pixora? Create an account to save your preferences and track orders."
+                : "Already have an account? Sign in to access your workspace."}
+            </p>
+          )}
           <div className="flex items-center justify-center">
-            <Link
-              to="/admin/login"
-              className="text-xs font-semibold text-amber-600 hover:text-amber-800"
-            >
-              ? Admin Access
-            </Link>
+            {isRecoveryMode ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRecoveryMode(false);
+                  setStatus("");
+                  setStatusType("");
+                  setResetPassword("");
+                  setResetPasswordConfirm("");
+                  setIsResetPasswordVisible(false);
+                }}
+                className="text-xs font-semibold text-slate-700 hover:text-slate-900"
+              >
+                Back to sign in
+              </button>
+            ) : (
+              <Link
+                to="/admin/login"
+                className="text-xs font-semibold text-amber-600 hover:text-amber-800"
+              >
+                ? Admin Access
+              </Link>
+            )}
           </div>
         </div>
       </form>

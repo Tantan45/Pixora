@@ -330,12 +330,12 @@ export default function Admin() {
   }
 
   if (!auth.isAuthed) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/admin/login" replace />;
   }
 
   const handleSignOut = async () => {
     await signOutEverywhere();
-    navigate("/login");
+    navigate("/admin/login");
   };
 
   const handlePriceDraftChange = (id, value) => {

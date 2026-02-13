@@ -100,6 +100,12 @@ const resolveAuthRedirectBaseUrl = () => {
 
   const currentUrl = new URL(window.location.href);
   const currentOrigin = currentUrl.origin;
+  const currentIsLocal = isLocalHostname(currentUrl.hostname);
+
+  // In local dev, always redirect back to the currently running origin (avoids port mismatches).
+  if (currentIsLocal) {
+    return currentOrigin;
+  }
 
   if (!configured) {
     return currentOrigin;
@@ -107,7 +113,6 @@ const resolveAuthRedirectBaseUrl = () => {
 
   try {
     const configuredUrl = new URL(configured, currentOrigin);
-    const currentIsLocal = isLocalHostname(currentUrl.hostname);
     const configuredIsLocal = isLocalHostname(configuredUrl.hostname);
 
     // Prevent cross-environment redirects (e.g. Vercel app -> localhost).

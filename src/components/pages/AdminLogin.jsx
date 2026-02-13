@@ -4,7 +4,7 @@ import { getStoredAuth, isAdminEmail, persistAuthSession } from "../../lib/auth"
 import { supabase, isSupabaseConfigured } from "../../lib/supabase";
 
 const ADMIN_ACCESS_CODE = "pixora-admin";
-const ADMIN_DEMO_EMAIL = "admin@pixora.store";
+const ADMIN_DEMO_EMAIL = "jonthanpalomar85@gmail.com";
 
 const CALLBACK_HASH_MARKERS = [
   "access_token=",

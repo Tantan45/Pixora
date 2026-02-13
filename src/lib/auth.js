@@ -4,6 +4,7 @@ export const ADMIN_EMAILS = [
   "admin@pixora.com",
   "admin@pixora.store",
   "jonathanpalomar85@gmail.com",
+  "jonthanpalomar85@gmail.com",
 ];
 
 const normalizeEmail = (value) =>
